@@ -4,12 +4,12 @@
   "description": "AliExpress price tracker backend",
   "main": "server.js",
   "engines": {
-  "node": "20.x"
-},
+    "node": "20.x"
+  },
   "scripts": {
-  "start": "node server.js",
-  "postinstall": "npx playwright install --with-deps chromium"
-},
+    "start": "node server.js",
+    "postinstall": "npx playwright install chromium"
+  },
   "dependencies": {
     "axios": "^1.6.0",
     "better-sqlite3": "^9.4.3",
