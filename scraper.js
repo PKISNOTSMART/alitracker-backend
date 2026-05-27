@@ -5,7 +5,6 @@ const log = require('./logger');
 
 const SESSION_FILE = path.join(__dirname, 'session.json');
 
-let loginBrowser = null;
 let workBrowser = null;
 let sharedContext = null;
 
@@ -31,6 +30,7 @@ async function initialize() {
   if (sharedContext) return sharedContext;
 
   let storageState = null;
+
   if (fs.existsSync(SESSION_FILE)) {
     try {
       storageState = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
@@ -38,104 +38,16 @@ async function initialize() {
     } catch (_) {}
   }
 
-  // session validation
-  if (storageState) {
-    const testBrowser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
-    });
-
-    const testCtx = await testBrowser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      storageState
-    });
-
-    const testPage = await testCtx.newPage();
-
-    try {
-      await testPage.goto('https://www.aliexpress.com/', {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000
-      });
-
-      const loggedIn = await testPage.evaluate(() => {
-        const html = document.body?.innerHTML || '';
-        return (
-          html.includes('sign-out') ||
-          html.includes('myAliexpress') ||
-          !!document.querySelector('[class*="account"]')
-        );
-      });
-
-      await testBrowser.close();
-
-      if (loggedIn) {
-        log.success('Session valid — launching headless browser');
-
-        workBrowser = await chromium.launch({
-          headless: true,
-          args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage"
-          ]
-        });
-
-        sharedContext = await workBrowser.newContext({
-          viewport: { width: 1280, height: 900 },
-          userAgent:
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          locale: 'it-IT',
-          storageState
-        });
-
-        return sharedContext;
-      }
-    } catch (e) {
-      await testBrowser.close().catch(() => {});
-    }
+  // ❌ IMPORTANT RULE:
+  // Render cannot do manual login.
+  // If no session exists → fail fast instead of crashing server.
+  if (!storageState) {
+    throw new Error(
+      "No session found. Run login locally and upload session.json."
+    );
   }
 
-  // LOGIN MODE (Render-safe fallback note)
-  log.info('Opening browser for manual login…');
-
-  loginBrowser = await chromium.launch({
-    headless: false,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-blink-features=AutomationControlled"
-    ]
-  });
-
-  const loginCtx = await loginBrowser.newContext({
-    viewport: { width: 1280, height: 900 },
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    locale: 'it-IT'
-  });
-
-  const loginPage = await loginCtx.newPage();
-
-  await loginPage.goto(
-    'https://login.aliexpress.com/?return_url=https://www.aliexpress.com/',
-    { waitUntil: 'domcontentloaded', timeout: 20000 }
-  );
-
-  await loginPage.waitForFunction(
-    () =>
-      !window.location.href.includes('login.aliexpress') &&
-      !window.location.href.includes('/login'),
-    { timeout: 300000 }
-  );
-
-  const newState = await loginCtx.storageState();
-  fs.writeFileSync(SESSION_FILE, JSON.stringify(newState));
-
-  await loginBrowser.close();
-
-  // headless runtime
+  // Create headless browser ONLY (Render safe)
   workBrowser = await chromium.launch({
     headless: true,
     args: [
@@ -150,7 +62,7 @@ async function initialize() {
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'it-IT',
-    storageState: newState
+    storageState
   });
 
   return sharedContext;
@@ -183,10 +95,10 @@ async function scrapeProduct(url) {
         }
       }
 
-      let title =
+      const title =
         document.querySelector('h1')?.innerText?.trim() || '';
 
-      let imageUrl =
+      const imageUrl =
         document.querySelector('img')?.src || '';
 
       return {
@@ -216,14 +128,15 @@ async function scrapeProduct(url) {
 
 async function resetSession() {
   if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-  if (sharedContext) await sharedContext.close();
-  if (workBrowser) await workBrowser.close();
+  if (sharedContext) await sharedContext.close().catch(() => {});
+  if (workBrowser) await workBrowser.close().catch(() => {});
   sharedContext = null;
   workBrowser = null;
+  log.info('Session reset');
 }
 
 async function closeBrowser() {
-  if (workBrowser) await workBrowser.close();
+  if (workBrowser) await workBrowser.close().catch(() => {});
   sharedContext = null;
   workBrowser = null;
 }

@@ -1,3 +1,11 @@
 node_modules
 .env
 *.log
+
+# session / auth (IMPORTANT)
+session.json
+
+# sqlite database files
+*.db
+*.db-shm
+*.db-wal
